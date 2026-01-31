@@ -42,14 +42,15 @@ pub struct PreprocessedInstanceMeta {
 /// Global preprocessed data shared by all batch-STARK instances.
 ///
 /// This batches all per-instance preprocessed traces into a single [`Pcs`]
-/// commitment and prover data object, while keeping a mapping from instance
-/// index to matrix index and per-matrix metadata.
+/// commitment, while keeping a mapping from instance index to matrix index
+/// and per-matrix metadata.
+///
+/// Note: The prover data is stored separately in [`ProverOnlyData`] since
+/// the verifier does not need it.
 pub struct GlobalPreprocessed<SC: SGC> {
     /// Single [`Pcs`] commitment to all preprocessed traces (one matrix per
     /// instance that defines preprocessed columns).
     pub commitment: Commitment<SC>,
-    /// [`Pcs`] prover data for the batched preprocessed commitment.
-    pub prover_data: <SC::Pcs as Pcs<Challenge<SC>, SC::Challenger>>::ProverData,
     /// For each STARK instance, optional metadata describing its preprocessed
     /// trace inside the global commitment.
     ///
@@ -82,6 +83,19 @@ pub struct CommonData<SC: SGC> {
     pub lookups: Vec<Vec<Lookup<Val<SC>>>>,
 }
 
+/// Prover-only data that is not needed by the verifier.
+///
+/// This struct wraps [`CommonData`] together with the prover-specific data
+/// required during proof generation. The verifier only needs [`CommonData`].
+pub struct ProverOnlyData<SC: SGC> {
+    /// Data common to both prover and verifier.
+    pub common: CommonData<SC>,
+    /// [`Pcs`] prover data for the batched preprocessed commitment.
+    ///
+    /// This is `None` when no instance uses preprocessed columns.
+    pub prover_data: Option<<SC::Pcs as Pcs<Challenge<SC>, SC::Challenger>>::ProverData>,
+}
+
 impl<SC: SGC> CommonData<SC> {
     pub const fn new(
         preprocessed: Option<GlobalPreprocessed<SC>>,
@@ -105,12 +119,24 @@ impl<SC: SGC> CommonData<SC> {
     }
 }
 
-impl<SC> CommonData<SC>
+impl<SC: SGC> ProverOnlyData<SC> {
+    /// Create [`ProverOnlyData`] with no preprocessed columns or lookups.
+    ///
+    /// Use this when none of your [`Air`] implementations have preprocessed columns or lookups.
+    pub fn empty(num_instances: usize) -> Self {
+        Self {
+            common: CommonData::empty(num_instances),
+            prover_data: None,
+        }
+    }
+}
+
+impl<SC> ProverOnlyData<SC>
 where
     SC: SGC,
     Challenge<SC>: BasedVectorSpace<Val<SC>>,
 {
-    /// Build [`CommonData`] directly from STARK instances.
+    /// Build [`ProverOnlyData`] directly from STARK instances.
     ///
     /// This automatically:
     /// - Derives trace degrees from trace heights
@@ -134,7 +160,7 @@ where
         Self::from_airs_and_degrees(config, &mut airs, &log_ext_degrees)
     }
 
-    /// Build [`CommonData`] from [`Air`] implementations and their extended trace degree bits.
+    /// Build [`ProverOnlyData`] from [`Air`] implementations and their extended trace degree bits.
     ///
     /// # Arguments
     ///
@@ -142,8 +168,9 @@ where
     ///
     /// # Returns
     ///
-    /// Global preprocessed data shared by all instances. The global commitment
-    /// is present only if at least one [`Air`] defines preprocessed columns.
+    /// Prover-only data containing both the common data (for verifier) and prover-specific data.
+    /// The global preprocessed commitment is present only if at least one [`Air`] defines
+    /// preprocessed columns.
     pub fn from_airs_and_degrees<A>(
         config: &SC,
         airs: &mut [A],
@@ -205,23 +232,28 @@ where
             }));
         }
 
-        let preprocessed = if domains_and_traces.is_empty() {
-            None
+        let (preprocessed, prover_data) = if domains_and_traces.is_empty() {
+            (None, None)
         } else {
             let (commitment, prover_data) = pcs.commit_preprocessing(domains_and_traces);
-            Some(GlobalPreprocessed {
-                commitment,
-                prover_data,
-                instances: instances_meta,
-                matrix_to_instance,
-            })
+            (
+                Some(GlobalPreprocessed {
+                    commitment,
+                    instances: instances_meta,
+                    matrix_to_instance,
+                }),
+                Some(prover_data),
+            )
         };
 
         let lookups = airs.iter_mut().map(|air| air.get_lookups()).collect();
 
         Self {
-            preprocessed,
-            lookups,
+            common: CommonData {
+                preprocessed,
+                lookups,
+            },
+            prover_data,
         }
     }
 }

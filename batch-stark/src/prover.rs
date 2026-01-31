@@ -20,7 +20,7 @@ use tracing::{debug_span, info_span, instrument};
 
 #[cfg(debug_assertions)]
 use crate::check_constraints::DebugConstraintBuilderWithLookups;
-use crate::common::{CommonData, get_perm_challenges};
+use crate::common::{CommonData, ProverOnlyData, get_perm_challenges};
 use crate::config::{Challenge, Domain, StarkGenericConfig as SGC, Val, observe_instance_binding};
 use crate::proof::{BatchCommitments, BatchOpenedValues, BatchProof, OpenedValuesWithLookups};
 use crate::symbolic::{get_log_num_quotient_chunks, get_symbolic_constraints};
@@ -67,7 +67,7 @@ pub fn prove_batch<
 >(
     config: &SC,
     instances: &[StarkInstance<'_, SC, A>],
-    common: &CommonData<SC>,
+    prover_only: &ProverOnlyData<SC>,
 ) -> BatchProof<SC>
 where
     SC: SGC,
@@ -186,7 +186,7 @@ where
     for &pre_w in preprocessed_widths.iter() {
         challenger.observe_base_as_algebra_element::<Challenge<SC>>(Val::<SC>::from_usize(pre_w));
     }
-    if let Some(global) = &common.preprocessed {
+    if let Some(global) = &prover_only.common.preprocessed {
         challenger.observe(global.commitment.clone());
     }
 
@@ -295,13 +295,14 @@ where
             });
 
         // Get preprocessed evaluations if this instance has preprocessed columns.
-        let preprocessed_on_quotient_domain = common
+        let preprocessed_on_quotient_domain = prover_only
+            .common
             .preprocessed
             .as_ref()
-            .and_then(|g| g.instances[i].as_ref().map(|meta| (g, meta)))
-            .map(|(g, meta)| {
+            .and_then(|g| g.instances[i].as_ref())
+            .map(|meta| {
                 pcs.get_evaluations_on_domain_no_random(
-                    &g.prover_data,
+                    prover_only.prover_data.as_ref().unwrap(),
                     meta.matrix_index,
                     quotient_domain,
                 )
@@ -402,7 +403,7 @@ where
 
         // Optional global preprocessed round: one matrix per instance that
         // has preprocessed columns.
-        if let Some(global) = &common.preprocessed {
+        if let Some(global) = &prover_only.common.preprocessed {
             let pre_points = global
                 .matrix_to_instance
                 .iter()
@@ -413,7 +414,7 @@ where
                     vec![zeta, zeta_next_i]
                 })
                 .collect::<Vec<_>>();
-            rounds.push((&global.prover_data, pre_points));
+            rounds.push((prover_only.prover_data.as_ref().unwrap(), pre_points));
         }
 
         let lookup_points: Vec<_> = trace_domains
@@ -434,14 +435,18 @@ where
             rounds.push(lookup_round);
         }
 
-        pcs.open_with_preprocessing(rounds, &mut challenger, common.preprocessed.is_some())
+        pcs.open_with_preprocessing(
+            rounds,
+            &mut challenger,
+            prover_only.common.preprocessed.is_some(),
+        )
     };
 
     // Rely on PCS indices for opened value groups: main trace, quotient, preprocessed.
     let trace_idx = SC::Pcs::TRACE_IDX;
     let quotient_idx = SC::Pcs::QUOTIENT_IDX;
     let preprocessed_idx = SC::Pcs::PREPROCESSED_TRACE_IDX;
-    let permutation_idx = if common.preprocessed.is_some() {
+    let permutation_idx = if prover_only.common.preprocessed.is_some() {
         preprocessed_idx + 1
     } else {
         preprocessed_idx
@@ -492,7 +497,7 @@ where
 
         // Preprocessed openings (if present).
         let (preprocessed_local, preprocessed_next) = if let (Some(global), Some(pre_round)) =
-            (&common.preprocessed, preprocessed_openings)
+            (&prover_only.common.preprocessed, preprocessed_openings)
         {
             global.instances[i].as_ref().map_or((None, None), |meta| {
                 let vals = &pre_round[meta.matrix_index];

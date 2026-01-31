@@ -6,7 +6,9 @@ use core::slice::from_ref;
 use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PermutationAirBuilder};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
 use p3_batch_stark::proof::{BatchProof, OpenedValuesWithLookups};
-use p3_batch_stark::{CommonData, StarkInstance, VerificationError, prove_batch, verify_batch};
+use p3_batch_stark::{
+    CommonData, ProverOnlyData, StarkInstance, VerificationError, prove_batch, verify_batch,
+};
 use p3_challenger::{DuplexChallenger, HashChallenger, SerializingChallenger32};
 use p3_circle::CirclePcs;
 use p3_commit::ExtensionMmcs;
@@ -754,12 +756,12 @@ fn test_two_instances() -> Result<(), impl Debug> {
         },
     ];
 
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
 
     let airs = vec![air_fib, air_mul];
     let pvs = vec![fib_pis, mul_pis];
-    verify_batch(&config, &airs, &proof, &pvs, &common)
+    verify_batch(&config, &airs, &proof, &pvs, &common.common)
 }
 
 #[test]
@@ -784,11 +786,11 @@ fn test_two_instances_zk() -> Result<(), impl Debug> {
         },
     ];
 
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
     let airs = vec![air_fib, air_mul];
     let pvs = vec![fib_pis, mul_pis];
-    verify_batch(&config, &airs, &proof, &pvs, &common)
+    verify_batch(&config, &airs, &proof, &pvs, &common.common)
 }
 
 #[test]
@@ -820,11 +822,11 @@ fn test_three_instances_mixed_sizes() -> Result<(), impl Debug> {
         },
     ];
 
-    let common: CommonData<MyConfig> = CommonData::from_instances(&config, &instances);
+    let common: ProverOnlyData<MyConfig> = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
     let airs = vec![air_fib16, air_mul8, air_fib8];
     let pvs = vec![fib16_pis, mul8_pis, fib8_pis];
-    verify_batch(&config, &airs, &proof, &pvs, &common)
+    verify_batch(&config, &airs, &proof, &pvs, &common.common)
 }
 
 #[test]
@@ -840,7 +842,7 @@ fn test_invalid_public_values_rejected() -> Result<(), Box<dyn std::error::Error
         public_values: fib_pis,
         lookups: vec![],
     }];
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
 
     // Wrong public value at verify => should reject
@@ -850,7 +852,7 @@ fn test_invalid_public_values_rejected() -> Result<(), Box<dyn std::error::Error
         Val::from_u64(1),
         Val::from_u64(correct_x + 1),
     ]];
-    let res = verify_batch(&config, &airs, &proof, &wrong_pvs, &common);
+    let res = verify_batch(&config, &airs, &proof, &wrong_pvs, &common.common);
     assert!(res.is_err(), "Should reject wrong public values");
     Ok::<_, Box<dyn std::error::Error>>(())
 }
@@ -885,11 +887,11 @@ fn test_different_widths() -> Result<(), impl Debug> {
         },
     ];
 
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
     let airs = vec![air_mul2, air_fib, air_mul3];
     let pvs = vec![mul2_pis, fib_pis, mul3_pis];
-    verify_batch(&config, &airs, &proof, &pvs, &common)
+    verify_batch(&config, &airs, &proof, &pvs, &common.common)
 }
 
 #[test]
@@ -905,12 +907,12 @@ fn test_preprocessed_tampered_fails() -> Result<(), Box<dyn std::error::Error>> 
         lookups: vec![],
     }];
 
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
 
     // First, sanity-check that verification succeeds with matching preprocessed data.
     let airs = vec![air];
-    let ok_res = verify_batch(&config, &airs, &proof, from_ref(&fib_pis), &common);
+    let ok_res = verify_batch(&config, &airs, &proof, from_ref(&fib_pis), &common.common);
     assert!(
         ok_res.is_ok(),
         "Expected verification to succeed with matching preprocessed data"
@@ -929,14 +931,14 @@ fn test_preprocessed_tampered_fails() -> Result<(), Box<dyn std::error::Error>> 
     let degree_bits = proof.degree_bits.clone();
     let mut airs_tampered = vec![air_tampered];
     let verify_common_tampered =
-        CommonData::from_airs_and_degrees(&config, &mut airs_tampered, &degree_bits);
+        ProverOnlyData::from_airs_and_degrees(&config, &mut airs_tampered, &degree_bits);
 
     let res = verify_batch(
         &config,
         &airs_tampered,
         &proof,
         &[fib_pis],
-        &verify_common_tampered,
+        &verify_common_tampered.common,
     );
     assert!(
         res.is_err(),
@@ -966,12 +968,12 @@ fn test_preprocessed_reuse_common_multi_proofs() -> Result<(), Box<dyn std::erro
         public_values: fib_pis1.clone(),
         lookups: vec![],
     }];
-    let common = CommonData::from_instances(&config, &instances1);
+    let common = ProverOnlyData::from_instances(&config, &instances1);
     let proof1 = prove_batch(&config, &instances1, &common);
 
     // Verify the first proof.
     let airs = vec![air];
-    let res1 = verify_batch(&config, &airs, &proof1, from_ref(&fib_pis1), &common);
+    let res1 = verify_batch(&config, &airs, &proof1, from_ref(&fib_pis1), &common.common);
     assert!(res1.is_ok(), "First verification should succeed");
 
     // Second proof: DIFFERENT initial values (2, 3) - demonstrates CommonData is truly reusable
@@ -990,7 +992,7 @@ fn test_preprocessed_reuse_common_multi_proofs() -> Result<(), Box<dyn std::erro
     }];
     let proof2 = prove_batch(&config, &instances2, &common);
 
-    let res2 = verify_batch(&config, &airs, &proof2, &[fib_pis2], &common);
+    let res2 = verify_batch(&config, &airs, &proof2, &[fib_pis2], &common.common);
     assert!(
         res2.is_ok(),
         "Second verification should succeed with different trace values"
@@ -1013,10 +1015,10 @@ fn test_single_instance() -> Result<(), impl Debug> {
         lookups: vec![],
     }];
 
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
     let airs = vec![air_fib];
-    verify_batch(&config, &airs, &proof, &[fib_pis], &common)
+    verify_batch(&config, &airs, &proof, &[fib_pis], &common.common)
 }
 
 #[test]
@@ -1041,14 +1043,14 @@ fn test_mixed_preprocessed() -> Result<(), impl Debug> {
         },
     ];
 
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
 
     let proof = prove_batch(&config, &instances, &common);
 
     let airs = vec![air_fib, air_mul];
     let pvs = vec![fib_pis, mul_pis];
 
-    verify_batch(&config, &airs, &proof, &pvs, &common)
+    verify_batch(&config, &airs, &proof, &pvs, &common.common)
 }
 
 #[test]
@@ -1069,7 +1071,7 @@ fn test_invalid_trace_width_rejected() {
     }];
 
     // Generate a valid proof
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let valid_proof = prove_batch(&config, &instances, &common);
 
     // Tamper with the proof: change trace_local to have wrong width
@@ -1115,7 +1117,7 @@ fn test_invalid_trace_width_rejected() {
 
     // Verification should fail due to width mismatch
     let airs = vec![air_fib];
-    let res = verify_batch(&config, &airs, &tampered_proof, from_ref(&fib_pis), &common);
+    let res = verify_batch(&config, &airs, &tampered_proof, from_ref(&fib_pis), &common.common);
     assert!(
         res.is_err(),
         "Verifier should reject trace with wrong width"
@@ -1136,7 +1138,7 @@ fn test_invalid_trace_width_rejected() {
             .trace_next[0],
     ]; // Wrong width
 
-    let res = verify_batch(&config, &airs, &tampered_proof, from_ref(&fib_pis), &common);
+    let res = verify_batch(&config, &airs, &tampered_proof, from_ref(&fib_pis), &common.common);
     assert!(
         res.is_err(),
         "Verifier should reject trace_next with wrong width"
@@ -1170,19 +1172,19 @@ fn test_reorder_instances_rejected() {
     let degrees: Vec<usize> = instances.iter().map(|i| i.trace.height()).collect();
     let log_degrees: Vec<usize> = degrees.iter().copied().map(log2_strict_usize).collect();
 
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
 
     // Swap order at verify -> should fail (create new CommonData with swapped AIRs)
     let mut airs_swapped = vec![air_b, air_a];
     let common_swapped =
-        CommonData::from_airs_and_degrees(&config, &mut airs_swapped, &log_degrees);
+        ProverOnlyData::from_airs_and_degrees(&config, &mut airs_swapped, &log_degrees);
     let res = verify_batch(
         &config,
         &airs_swapped,
         &proof,
         &[pv_b, pv_a],
-        &common_swapped,
+        &common_swapped.common,
     );
     assert!(res.is_err(), "Verifier should reject reordered instances");
 }
@@ -1201,7 +1203,7 @@ fn test_quotient_chunk_element_len_rejected() {
         public_values: pv.clone(),
         lookups: vec![],
     }];
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
 
     let mut tampered = proof;
@@ -1211,7 +1213,7 @@ fn test_quotient_chunk_element_len_rejected() {
         .pop();
 
     let airs = vec![air];
-    let res = verify_batch(&config, &airs, &tampered, from_ref(&pv), &common);
+    let res = verify_batch(&config, &airs, &tampered, from_ref(&pv), &common.common);
     assert!(
         res.is_err(),
         "Verifier should reject truncated quotient chunk element"
@@ -1267,12 +1269,12 @@ fn test_circle_stark_batch() -> Result<(), impl Debug> {
 
     // Generate batch-proof
     // Plain FibonacciAir doesn't have preprocessed columns
-    let common = CommonData::empty(airs.len());
+    let common = ProverOnlyData::empty(airs.len());
     let proof = prove_batch(&config, &instances, &common);
 
     // Verify batch-proof
     let public_values = vec![fib_pis1, fib_pis2];
-    verify_batch(&config, &airs, &proof, &public_values, &common)
+    verify_batch(&config, &airs, &proof, &public_values, &common.common)
         .map_err(|e| format!("Verification failed: {:?}", e))
 }
 
@@ -1391,8 +1393,8 @@ fn verify_two_adic_compat_fixture() -> Result<(), Box<dyn std::error::Error>> {
     let proof_bytes = read_fixture(TWO_ADIC_FIXTURE)
         .expect("Missing fixture. Run: cargo test -p p3-batch-stark --test simple -- --ignored");
     let proof: BatchProof<MyConfig> = postcard::from_bytes(&proof_bytes)?;
-    let common = CommonData::from_airs_and_degrees(&config, &mut airs, &proof.degree_bits);
-    verify_batch(&config, &airs, &proof, &pvs, &common)?;
+    let common = ProverOnlyData::from_airs_and_degrees(&config, &mut airs, &proof.degree_bits);
+    verify_batch(&config, &airs, &proof, &pvs, &common.common)?;
     Ok(())
 }
 
@@ -1402,8 +1404,8 @@ fn verify_circle_compat_fixture() -> Result<(), Box<dyn std::error::Error>> {
     let proof_bytes = read_fixture(CIRCLE_FIXTURE)
         .expect("Missing fixture. Run: cargo test -p p3-batch-stark --test simple -- --ignored");
     let proof: BatchProof<CircleConfig> = postcard::from_bytes(&proof_bytes)?;
-    let common = CommonData::from_airs_and_degrees(&config, &mut airs, &proof.degree_bits);
-    verify_batch(&config, &airs, &proof, &pvs, &common)?;
+    let common = ProverOnlyData::from_airs_and_degrees(&config, &mut airs, &proof.degree_bits);
+    verify_batch(&config, &airs, &proof, &pvs, &common.common)?;
     Ok(())
 }
 
@@ -1412,8 +1414,8 @@ fn verify_circle_compat_fixture() -> Result<(), Box<dyn std::error::Error>> {
 fn generate_two_adic_fixture() -> Result<(), Box<dyn std::error::Error>> {
     // Regen: cargo test -p p3-batch-stark --test simple -- --ignored
     let (config, mut airs, traces, pvs, log_degrees) = two_adic_compat_case();
-    let common = CommonData::from_airs_and_degrees(&config, &mut airs, &log_degrees);
-    let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, &common);
+    let common = ProverOnlyData::from_airs_and_degrees(&config, &mut airs, &log_degrees);
+    let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, &common.common);
     let proof = prove_batch(&config, &instances, &common);
     let bytes = postcard::to_allocvec(&proof)?;
     write_fixture(TWO_ADIC_FIXTURE, &bytes)?;
@@ -1425,8 +1427,8 @@ fn generate_two_adic_fixture() -> Result<(), Box<dyn std::error::Error>> {
 fn generate_circle_fixture() -> Result<(), Box<dyn std::error::Error>> {
     // Regen: cargo test -p p3-batch-stark --test simple -- --ignored
     let (config, mut airs, traces, pvs, log_degrees) = circle_compat_case();
-    let common = CommonData::from_airs_and_degrees(&config, &mut airs, &log_degrees);
-    let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, &common);
+    let common = ProverOnlyData::from_airs_and_degrees(&config, &mut airs, &log_degrees);
+    let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, &common.common);
     let proof = prove_batch(&config, &instances, &common);
     let bytes = postcard::to_allocvec(&proof)?;
     write_fixture(CIRCLE_FIXTURE, &bytes)?;
@@ -1448,10 +1450,10 @@ fn test_preprocessed_constraint_positive() -> Result<(), impl Debug> {
         lookups: vec![],
     }];
 
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
     let airs = vec![air];
-    verify_batch(&config, &airs, &proof, &[pis], &common)
+    verify_batch(&config, &airs, &proof, &[pis], &common.common)
 }
 
 #[test]
@@ -1470,7 +1472,7 @@ fn test_preprocessed_constraint_negative() -> Result<(), Box<dyn std::error::Err
         lookups: vec![],
     }];
 
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
 
     // Verify with wrong multiplier=3 (should fail)
@@ -1480,9 +1482,9 @@ fn test_preprocessed_constraint_negative() -> Result<(), Box<dyn std::error::Err
     });
     let mut airs = vec![air_verify];
     let degree_bits = proof.degree_bits.clone();
-    let verify_common = CommonData::from_airs_and_degrees(&config, &mut airs, &degree_bits);
+    let verify_common = ProverOnlyData::from_airs_and_degrees(&config, &mut airs, &degree_bits);
 
-    let res = verify_batch(&config, &airs, &proof, &[pis], &verify_common);
+    let res = verify_batch(&config, &airs, &proof, &[pis], &verify_common.common);
     let err = res.expect_err(
         "Verification should fail when preprocessed constraint multiplier doesn't match",
     );
@@ -1525,12 +1527,12 @@ fn test_mixed_preprocessed_constraints() -> Result<(), impl Debug> {
         },
     ];
 
-    let common = CommonData::from_instances(&config, &instances);
+    let common = ProverOnlyData::from_instances(&config, &instances);
     let proof = prove_batch(&config, &instances, &common);
 
     let airs = vec![air_fib, air_mul, air_pp_mul];
     let pvs = vec![fib_pis, mul_pis, pp_mul_pis];
-    verify_batch(&config, &airs, &proof, &pvs, &common)
+    verify_batch(&config, &airs, &proof, &pvs, &common.common)
 }
 
 // Tests for local and global lookup handling in multi-stark.
@@ -1552,14 +1554,14 @@ fn test_batch_stark_one_instance_local_only() -> Result<(), impl Debug> {
 
     // Get lookups from the lookup-enabled AIRs
     let common_data =
-        CommonData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_height]);
+        ProverOnlyData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_height]);
 
-    let instances = StarkInstance::new_multiple(&airs, &[mul_trace], &[vec![]], &common_data);
+    let instances = StarkInstance::new_multiple(&airs, &[mul_trace], &[vec![]], &common_data.common);
 
     let proof = prove_batch(&config, &instances, &common_data);
 
     let pvs = vec![vec![]];
-    verify_batch(&config, &airs, &proof, &pvs, &common_data)
+    verify_batch(&config, &airs, &proof, &pvs, &common_data.common)
 }
 
 /// Test with local lookups only, which fail due to wrong permutation column.
@@ -1585,9 +1587,9 @@ fn test_batch_stark_one_instance_local_fails() {
 
     // Get lookups from the lookup-enabled AIRs
     let common_data =
-        CommonData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_height]);
+        ProverOnlyData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_height]);
 
-    let instances = StarkInstance::new_multiple(&airs, &[mul_trace], &[vec![]], &common_data);
+    let instances = StarkInstance::new_multiple(&airs, &[mul_trace], &[vec![]], &common_data.common);
 
     prove_batch(&config, &instances, &common_data);
 }
@@ -1615,13 +1617,13 @@ fn test_batch_stark_one_instance_local_fails() {
 
     // Get lookups from the lookup-enabled AIRs
     let common_data =
-        CommonData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_height]);
+        ProverOnlyData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_height]);
 
-    let instances = StarkInstance::new_multiple(&airs, &[mul_trace], &[vec![]], &common_data);
+    let instances = StarkInstance::new_multiple(&airs, &[mul_trace], &[vec![]], &common_data.common);
 
     let proof = prove_batch(&config, &instances, &common_data);
 
-    verify_batch(&config, &airs, &proof, &[vec![]], &common_data).unwrap();
+    verify_batch(&config, &airs, &proof, &[vec![]], &common_data.common).unwrap();
 }
 
 /// Test with local lookups only using MulAirLookups
@@ -1655,7 +1657,7 @@ fn test_batch_stark_local_lookups_only() -> Result<(), impl Debug> {
     let mut airs = [air1, air2];
 
     // Get lookups from the lookup-enabled AIRs
-    let common_data = CommonData::<MyConfig>::from_airs_and_degrees(
+    let common_data = ProverOnlyData::<MyConfig>::from_airs_and_degrees(
         &config,
         &mut airs,
         &[log_height, log_height],
@@ -1671,7 +1673,7 @@ fn test_batch_stark_local_lookups_only() -> Result<(), impl Debug> {
     let proof = prove_batch(&config, &instances, &common_data);
 
     let pvs = vec![vec![], fib_pis];
-    verify_batch(&config, &airs, &proof, &pvs, &common_data)
+    verify_batch(&config, &airs, &proof, &pvs, &common_data.common)
 }
 
 /// Test with global lookups only using MulAirLookups and FibAirLookups  
@@ -1711,7 +1713,7 @@ fn test_batch_stark_global_lookups_only() -> Result<(), impl Debug> {
     // Get lookups from the lookup-enabled AIRs
     let mut airs = [air1, air2];
     let common_data =
-        CommonData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_n, log_n]);
+        ProverOnlyData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_n, log_n]);
 
     let instances = StarkInstance::new_multiple(
         &airs,
@@ -1723,7 +1725,7 @@ fn test_batch_stark_global_lookups_only() -> Result<(), impl Debug> {
     let proof = prove_batch(&config, &instances, &common_data);
 
     let pvs = vec![vec![], fib_pis];
-    verify_batch(&config, &airs, &proof, &pvs, &common_data)
+    verify_batch(&config, &airs, &proof, &pvs, &common_data.common)
 }
 
 /// Test with both local and global lookups using MulAirLookups and FibAirLookups
@@ -1761,7 +1763,7 @@ fn test_batch_stark_both_lookups() -> Result<(), impl Debug> {
 
     let mut airs = [air1, air2];
     // Get lookups from the lookup-enabled AIRs
-    let common_data = CommonData::<MyConfig>::from_airs_and_degrees(
+    let common_data = ProverOnlyData::<MyConfig>::from_airs_and_degrees(
         &config,
         &mut airs,
         &[log_height, log_height],
@@ -1777,7 +1779,7 @@ fn test_batch_stark_both_lookups() -> Result<(), impl Debug> {
     let proof = prove_batch(&config, &instances, &common_data);
 
     let pvs = vec![vec![], fib_pis];
-    verify_batch(&config, &airs, &proof, &pvs, &common_data)
+    verify_batch(&config, &airs, &proof, &pvs, &common_data.common)
 }
 
 /// Test with both local and global lookups using MulAirLookups and FibAirLookups, with ZK mode activated
@@ -1815,7 +1817,7 @@ fn test_batch_stark_both_lookups_zk() -> Result<(), impl Debug> {
 
     let mut airs = [air1, air2];
     // Get lookups from the lookup-enabled AIRs
-    let common_data = CommonData::<MyHidingConfig>::from_airs_and_degrees(
+    let common_data = ProverOnlyData::<MyHidingConfig>::from_airs_and_degrees(
         &config,
         &mut airs,
         &[log_height + config.is_zk(), log_height + config.is_zk()],
@@ -1831,7 +1833,7 @@ fn test_batch_stark_both_lookups_zk() -> Result<(), impl Debug> {
     let proof = prove_batch(&config, &instances, &common_data);
 
     let pvs = vec![vec![], fib_pis];
-    verify_batch(&config, &airs, &proof, &pvs, &common_data)
+    verify_batch(&config, &airs, &proof, &pvs, &common_data.common)
 }
 
 #[test]
@@ -1874,9 +1876,9 @@ fn test_batch_stark_failed_global_lookup() {
     // Get lookups from the lookup-enabled AIRs
     let mut airs = [air1, air2];
     let common_data =
-        CommonData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_n, log_n]);
+        ProverOnlyData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_n, log_n]);
 
-    let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, &common_data);
+    let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, &common_data.common);
 
     let proof = prove_batch(&config, &instances, &common_data);
 
@@ -1884,7 +1886,7 @@ fn test_batch_stark_failed_global_lookup() {
     // - MulAir sends values to "MulFib1" and "MulFib2" lookups
     // - FibAir only receives from "MulFib" lookup
     // - The global cumulative sums won't match
-    verify_batch(&config, &airs, &proof, &pvs, &common_data).unwrap();
+    verify_batch(&config, &airs, &proof, &pvs, &common_data.common).unwrap();
 }
 
 /// Test mixing instances with lookups and instances without lookups.
@@ -1969,7 +1971,7 @@ fn test_batch_stark_mixed_lookups() -> Result<(), impl Debug> {
     ];
 
     // Get all lookups
-    let common_data = CommonData::<MyConfig>::from_airs_and_degrees(
+    let common_data = ProverOnlyData::<MyConfig>::from_airs_and_degrees(
         &config,
         &mut all_airs,
         &[log_n1, log_n2, log_n1, log_n2, log_n1, log_n1],
@@ -1995,12 +1997,12 @@ fn test_batch_stark_mixed_lookups() -> Result<(), impl Debug> {
     ];
 
     // Create instances - mixing lookup and non-lookup instances
-    let instances = StarkInstance::new_multiple(&all_airs, &traces, &all_pvs, &common_data);
+    let instances = StarkInstance::new_multiple(&all_airs, &traces, &all_pvs, &common_data.common);
 
     let proof = prove_batch(&config, &instances, &common_data);
 
     // Verify with mixed AIRs
-    verify_batch(&config, &all_airs, &proof, &all_pvs, &common_data)
+    verify_batch(&config, &all_airs, &proof, &all_pvs, &common_data.common)
 }
 
 // Single table with local lookup involving the Lagrange selectors. Since the selectors are not normalized,
@@ -2172,7 +2174,7 @@ fn test_single_table_local_lookup() -> Result<(), impl Debug> {
 
     // Get lookups from the lookup-enabled AIR
     let common_data =
-        CommonData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_height]);
+        ProverOnlyData::<MyConfig>::from_airs_and_degrees(&config, &mut airs, &[log_height]);
 
     // Generate trace
     let trace = single_table_local_lookup_trace::<Val>(height);
@@ -2180,9 +2182,9 @@ fn test_single_table_local_lookup() -> Result<(), impl Debug> {
     let traces = vec![trace];
     let pvs = vec![vec![]]; // No public values
 
-    let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, &common_data);
+    let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, &common_data.common);
 
     let proof = prove_batch(&config, &instances, &common_data);
 
-    verify_batch(&config, &airs, &proof, &pvs, &common_data)
+    verify_batch(&config, &airs, &proof, &pvs, &common_data.common)
 }
